@@ -61,7 +61,7 @@ runs:
         command -v cargo >/dev/null
         command -v rustup >/dev/null
         command -v python >/dev/null
-        rustup toolchain install 1.88.0 --profile minimal --no-self-update
+        rustup toolchain install 1.88.0 --profile minimal --component clippy --no-self-update
         cargo +1.88.0 --version
         python --version
 

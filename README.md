@@ -138,7 +138,7 @@ sec-guard-action/
 Run the pinned Rust checks:
 
 ```bash
-rustup toolchain install 1.88.0 --profile minimal --component rustfmt
+rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
 cargo +1.88.0 fmt --all -- --check
 cargo +1.88.0 test --workspace --locked
 cargo +1.88.0 clippy --workspace --all-targets --locked -- -D warnings
