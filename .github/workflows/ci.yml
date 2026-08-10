@@ -9,40 +9,65 @@ permissions:
 
 jobs:
   rust:
-    name: Rust build and tests
+    name: Rust build, tests, and report smoke test
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt --no-self-update
+
+      - name: Cache Rust build and registry
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
-          components: rustfmt
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: sec-guard-ci-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sec-guard-ci-${{ runner.os }}-
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo +1.88.0 fmt --all -- --check
 
       - name: Run Rust tests
-        run: cargo test --workspace --all-targets --locked
+        run: cargo +1.88.0 test --workspace --all-targets --locked
+
+      - name: Run Rust lints
+        run: cargo +1.88.0 clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Build Rust workspace
-        run: cargo build --workspace --locked
+        run: cargo +1.88.0 build --workspace --locked
+
+      - name: Smoke test JSON and SARIF outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-artifacts
+          cargo +1.88.0 run --locked --package sec-guard-core -- \
+            --workspace . \
+            --output .ci-artifacts/report.json \
+            --sarif-output .ci-artifacts/report.sarif
+          python -c 'import json, pathlib; report=json.loads(pathlib.Path(".ci-artifacts/report.json").read_text()); sarif=json.loads(pathlib.Path(".ci-artifacts/report.sarif").read_text()); assert report["scan_complete"] is True; assert sarif["version"] == "2.1.0"'
 
   python:
-    name: Python unit tests
+    name: Python unit tests and action contract
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
-      - name: Install package and test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+      - name: Install pinned runtime and test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --requirement requirements-runtime.txt --requirement requirements-test.txt
+          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --editable .
 
       - name: Run Python unit tests
         run: pytest -q

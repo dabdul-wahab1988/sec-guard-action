@@ -1,10 +1,10 @@
 import json
 
 from sec_guard.agent import main
-from sec_guard.models import Finding, Report, ReportSummary, Severity
+from sec_guard.models import Finding, Report, ReportSummary, ScanSummary, Severity
 
 
-def write_report(path, findings):
+def write_report(path, findings, **updates):
     report = Report(
         schema_version="1.0",
         repository="https://github.com/dabdul-wahab1988/sec-guard-action",
@@ -18,6 +18,8 @@ def write_report(path, findings):
             highest_severity=max((finding.severity for finding in findings), key=lambda value: value.rank, default=None),
         ),
     )
+    if updates:
+        report = report.model_copy(update=updates)
     path.write_text(json.dumps(report.model_dump(mode="json")), encoding="utf-8")
 
 
@@ -49,3 +51,47 @@ def test_agent_fails_when_finding_meets_threshold(tmp_path):
     write_report(report_path, [finding])
 
     assert main(["--report", str(report_path), "--severity-threshold", "high"]) == 1
+
+
+def test_agent_writes_machine_readable_github_outputs(tmp_path):
+    report_path = tmp_path / "report.json"
+    output_path = tmp_path / "github-output"
+    write_report(report_path, [])
+
+    assert main(
+        [
+            "--report",
+            str(report_path),
+            "--github-output",
+            str(output_path),
+        ]
+    ) == 0
+
+    outputs = output_path.read_text(encoding="utf-8")
+    assert "blocking_findings=0" in outputs
+    assert "scan_complete=true" in outputs
+    assert "exit_code=0" in outputs
+
+
+def test_agent_fails_closed_for_an_incomplete_scan(tmp_path):
+    report_path = tmp_path / "report.json"
+    output_path = tmp_path / "github-output"
+    write_report(
+        report_path,
+        [],
+        scan_complete=False,
+        scan_summary=ScanSummary(oversized_files=["large.txt"]),
+    )
+
+    assert main(
+        [
+            "--report",
+            str(report_path),
+            "--github-output",
+            str(output_path),
+        ]
+    ) == 2
+
+    outputs = output_path.read_text(encoding="utf-8")
+    assert "scan_complete=false" in outputs
+    assert "exit_code=2" in outputs
