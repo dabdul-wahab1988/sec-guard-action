@@ -18,49 +18,168 @@ inputs:
     description: "Minimum severity that fails the job: info, low, medium, high, or critical."
     required: false
     default: high
+  model:
+    description: OpenAI model used when patch drafting is enabled.
+    required: false
+    default: gpt-4.1-mini
+  ignore_file:
+    description: Workspace-relative path to a line-based sec-guard ignore file.
+    required: false
+    default: .sec-guardignore
+
+outputs:
+  report_path:
+    description: Absolute path to the JSON report in the runner temporary directory.
+    value: ${{ steps.paths.outputs.report_path }}
+  sarif_path:
+    description: Absolute path to the SARIF report in the runner temporary directory.
+    value: ${{ steps.paths.outputs.sarif_path }}
+  patch_path:
+    description: Absolute path where an optional advisory patch draft is written.
+    value: ${{ steps.paths.outputs.patch_path }}
+  blocking_findings:
+    description: Number of findings at or above the configured severity threshold.
+    value: ${{ steps.evaluate.outputs.blocking_findings }}
+  scan_complete:
+    description: Whether the scanner examined the complete eligible workspace.
+    value: ${{ steps.evaluate.outputs.scan_complete }}
+  exit_code:
+    description: Agent result code, where 0 passes, 1 is a severity failure, and 2 is an incomplete or invalid scan.
+    value: ${{ steps.evaluate.outputs.exit_code }}
 
 runs:
   using: composite
   steps:
-    - name: Verify runner toolchain
+    - name: Verify Linux runner and toolchain
       shell: bash
       run: |
         set -euo pipefail
+        if [[ "${RUNNER_OS:-}" != "Linux" ]]; then
+          echo "sec-guard-action currently supports Linux runners because it uses Bash and the pinned Rust toolchain." >&2
+          exit 2
+        fi
         command -v cargo >/dev/null
+        command -v rustup >/dev/null
         command -v python >/dev/null
-        cargo --version
+        rustup toolchain install 1.88.0 --profile minimal --component clippy --no-self-update
+        cargo +1.88.0 --version
         python --version
 
-    - name: Install sec-guard Python agent
+    - name: Install pinned sec-guard runtime dependencies
       shell: bash
       run: |
         set -euo pipefail
-        python -m pip install --disable-pip-version-check --no-warn-script-location --upgrade "${{ github.action_path }}"
+        mkdir -p "$RUNNER_TEMP/sec-guard/python"
+        python -m pip install \
+          --disable-pip-version-check \
+          --no-warn-script-location \
+          --requirement "${{ github.action_path }}/requirements-runtime.txt" \
+          --target "$RUNNER_TEMP/sec-guard/python"
 
-    - name: Run Rust security scan
+    - name: Cache Rust build and registry
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ${{ github.action_path }}/target
+        # hashFiles cannot reliably address files outside the caller workspace;
+        # bump this suffix deliberately when the action lockfile changes.
+        key: sec-guard-${{ runner.os }}-rust-1.88.0-cargo-lock-v1
+        restore-keys: |
+          sec-guard-${{ runner.os }}-
+
+    - name: Set result paths
+      id: paths
       shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
         set -euo pipefail
         mkdir -p "$RUNNER_TEMP/sec-guard"
-        cargo run --locked --manifest-path "${{ github.action_path }}/Cargo.toml" --package sec-guard-core --release -- \
-          --workspace "${{ github.workspace }}" \
-          --output "$RUNNER_TEMP/sec-guard/report.json" \
-          --severity-threshold "${{ inputs.severity_threshold }}"
+        {
+          echo "report_dir=$RUNNER_TEMP/sec-guard"
+          echo "report_path=$RUNNER_TEMP/sec-guard/report.json"
+          echo "sarif_path=$RUNNER_TEMP/sec-guard/report.sarif"
+          echo "patch_path=$RUNNER_TEMP/sec-guard/sec-guard.patch"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run Rust security scan
+      id: scan
+      continue-on-error: true
+      shell: bash
+      env:
+        SEC_GUARD_IGNORE_FILE: ${{ inputs.ignore_file }}
+        SEC_GUARD_THRESHOLD: ${{ inputs.severity_threshold }}
+      run: |
+        set -euo pipefail
+        ignore_file="$SEC_GUARD_IGNORE_FILE"
+        if [[ "$ignore_file" != /* ]]; then
+          ignore_file="$GITHUB_WORKSPACE/$ignore_file"
+        fi
+        cargo +1.88.0 run \
+          --locked \
+          --manifest-path "${{ github.action_path }}/Cargo.toml" \
+          --package sec-guard-core \
+          --release \
+          -- \
+          --workspace "$GITHUB_WORKSPACE" \
+          --output "${{ steps.paths.outputs.report_path }}" \
+          --sarif-output "${{ steps.paths.outputs.sarif_path }}" \
+          --ignore-file "$ignore_file" \
+          --severity-threshold "$SEC_GUARD_THRESHOLD"
 
     - name: Evaluate findings and draft optional patch
+      id: evaluate
+      continue-on-error: true
       shell: bash
       env:
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
+        SEC_GUARD_MODEL: ${{ inputs.model }}
+        SEC_GUARD_REPORT: ${{ steps.paths.outputs.report_path }}
+        SEC_GUARD_WORKSPACE: ${{ github.workspace }}
+        SEC_GUARD_REPOSITORY: ${{ github.repository }}
+        SEC_GUARD_THRESHOLD: ${{ inputs.severity_threshold }}
+        SEC_GUARD_PATCH: ${{ steps.paths.outputs.patch_path }}
+        PYTHONPATH: ${{ github.action_path }}/python/sec_guard:${{ runner.temp }}/sec-guard/python
+      run: |
+        set +e
+        python -m sec_guard.agent \
+          --report "$SEC_GUARD_REPORT" \
+          --workspace "$SEC_GUARD_WORKSPACE" \
+          --repository "$SEC_GUARD_REPOSITORY" \
+          --severity-threshold "$SEC_GUARD_THRESHOLD" \
+          --generate-patch \
+          --patch-output "$SEC_GUARD_PATCH" \
+          --github-output "$GITHUB_OUTPUT"
+        status=$?
+        printf 'exit_code=%s\n' "$status" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Upload sec-guard results
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: sec-guard-results
+        path: ${{ steps.paths.outputs.report_dir }}
+        if-no-files-found: warn
+        retention-days: 7
+
+    - name: Enforce sec-guard result
+      if: always() && (steps.scan.outcome != 'success' || steps.evaluate.outputs.exit_code != '0')
+      shell: bash
       run: |
         set -euo pipefail
-        python -m sec_guard.agent \
-          --report "$RUNNER_TEMP/sec-guard/report.json" \
-          --workspace "$GITHUB_WORKSPACE" \
-          --repository "$GITHUB_REPOSITORY" \
-          --severity-threshold "${{ inputs.severity_threshold }}" \
-          --generate-patch \
-          --patch-output "$RUNNER_TEMP/sec-guard/sec-guard.patch"
-        echo "sec-guard-action: report directory is $RUNNER_TEMP/sec-guard"
+        if [[ "${{ steps.scan.outcome }}" != "success" ]]; then
+          echo "sec-guard-action: Rust scan failed or was incomplete; inspect the uploaded report artifact." >&2
+          exit 2
+        fi
+        case "${{ steps.evaluate.outputs.exit_code }}" in
+          1)
+            echo "sec-guard-action: severity threshold exceeded; inspect the uploaded report and patch artifact." >&2
+            exit 1
+            ;;
+          *)
+            echo "sec-guard-action: agent failed or did not return a valid result; inspect the uploaded report artifact." >&2
+            exit 2
+            ;;
+        esac

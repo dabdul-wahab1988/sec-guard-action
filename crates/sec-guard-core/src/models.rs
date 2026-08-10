@@ -69,6 +69,32 @@ pub struct ReportSummary {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScanError {
+    pub path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ScanSummary {
+    pub scanned_files: usize,
+    pub skipped_non_text_files: usize,
+    pub ignored_files: usize,
+    pub ignored_directories: usize,
+    pub oversized_files: Vec<String>,
+    pub non_utf8_files: Vec<String>,
+    pub read_errors: Vec<ScanError>,
+    pub syntax_error_files: Vec<String>,
+}
+
+impl ScanSummary {
+    pub fn is_complete(&self) -> bool {
+        self.oversized_files.is_empty()
+            && self.non_utf8_files.is_empty()
+            && self.read_errors.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Report {
     pub schema_version: String,
     pub repository: String,
@@ -77,6 +103,8 @@ pub struct Report {
     pub severity_threshold: Severity,
     pub findings: Vec<Finding>,
     pub summary: ReportSummary,
+    pub scan_complete: bool,
+    pub scan_summary: ScanSummary,
 }
 
 impl Report {
@@ -85,6 +113,7 @@ impl Report {
         workspace: String,
         severity_threshold: Severity,
         findings: Vec<Finding>,
+        scan_summary: ScanSummary,
     ) -> Self {
         let mut by_severity = BTreeMap::new();
         for finding in &findings {
@@ -101,9 +130,10 @@ impl Report {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs())
             .unwrap_or_default();
+        let scan_complete = scan_summary.is_complete();
 
         Self {
-            schema_version: "1.0".to_string(),
+            schema_version: "1.1".to_string(),
             repository,
             workspace,
             generated_at_unix,
@@ -114,6 +144,8 @@ impl Report {
                 by_severity,
                 highest_severity,
             },
+            scan_complete,
+            scan_summary,
         }
     }
 }

@@ -10,7 +10,7 @@ from typing import Any
 import requests
 from pydantic import ValidationError
 
-from .codex_client import CodexClient
+from .codex_client import CodexClient, redact_sensitive_text
 from .models import Finding, Report, Severity
 
 
@@ -27,6 +27,12 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(".sec-guard/sec-guard.patch"),
         help="Path for the optional unified diff",
     )
+    parser.add_argument(
+        "--github-output",
+        type=Path,
+        default=None,
+        help="Optional GITHUB_OUTPUT file for action result values",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -34,6 +40,13 @@ def main(argv: list[str] | None = None) -> int:
         threshold = Severity.parse(args.severity_threshold) if args.severity_threshold else report.severity_threshold
     except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
         print(f"sec-guard-agent: unable to load report: {exc}", file=sys.stderr)
+        _write_github_outputs(
+            args.github_output,
+            blocking_findings=0,
+            scan_complete=False,
+            exit_code=2,
+            patch_path=args.patch_output,
+        )
         return 2
 
     blocking = [finding for finding in report.findings if finding.severity.rank >= threshold.rank]
@@ -44,14 +57,39 @@ def main(argv: list[str] | None = None) -> int:
     for finding in blocking:
         _emit_annotation(finding)
 
+    if not report.scan_complete:
+        print(
+            "sec-guard-agent: scan was incomplete; refusing to evaluate a partial workspace",
+            file=sys.stderr,
+        )
+        for reason in report.scan_summary.incomplete_reasons:
+            print(f"sec-guard-agent: {reason}", file=sys.stderr)
+        _write_github_outputs(
+            args.github_output,
+            blocking_findings=len(blocking),
+            scan_complete=False,
+            exit_code=2,
+            patch_path=args.patch_output,
+        )
+        return 2
+
     if args.generate_patch and blocking:
         _maybe_generate_patch(report, blocking, args)
 
     if blocking:
         print("sec-guard-agent: severity gate failed", file=sys.stderr)
-        return 1
-    print("sec-guard-agent: severity gate passed")
-    return 0
+        exit_code = 1
+    else:
+        print("sec-guard-agent: severity gate passed")
+        exit_code = 0
+    _write_github_outputs(
+        args.github_output,
+        blocking_findings=len(blocking),
+        scan_complete=True,
+        exit_code=exit_code,
+        patch_path=args.patch_output,
+    )
+    return exit_code
 
 
 def _load_report(path: Path) -> Report:
@@ -84,16 +122,42 @@ def _maybe_generate_patch(report: Report, blocking: list[Finding], args: argpars
             repository_context=repository_context,
         )
         args.patch_output.parent.mkdir(parents=True, exist_ok=True)
-        args.patch_output.write_text(result.patch.rstrip() + "\n", encoding="utf-8")
+        safe_patch = redact_sensitive_text(result.patch.rstrip())
+        args.patch_output.write_text(safe_patch + "\n", encoding="utf-8")
         print(f"sec-guard-agent: patch draft written to {args.patch_output}")
         if result.summary:
-            print(f"sec-guard-agent: {result.summary}")
+            print(f"sec-guard-agent: {redact_sensitive_text(result.summary)}")
         if result.tests:
             print("sec-guard-agent: suggested verification commands:")
             for command in result.tests:
                 print(f"  - {command}")
     except Exception as exc:  # pragma: no cover - provider failures depend on the network
-        print(f"sec-guard-agent: patch generation skipped after provider error: {exc}", file=sys.stderr)
+        print(
+            "sec-guard-agent: patch generation skipped after provider error: "
+            f"{type(exc).__name__}",
+            file=sys.stderr,
+        )
+
+
+def _write_github_outputs(
+    path: Path | None,
+    *,
+    blocking_findings: int,
+    scan_complete: bool,
+    exit_code: int,
+    patch_path: Path,
+) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(f"blocking_findings={blocking_findings}\n")
+            handle.write(f"scan_complete={str(scan_complete).lower()}\n")
+            handle.write(f"exit_code={exit_code}\n")
+            handle.write(f"patch_path={patch_path}\n")
+    except OSError as exc:
+        print(f"sec-guard-agent: unable to write GitHub outputs: {exc}", file=sys.stderr)
 
 
 def _fetch_repository_context(repository: str, token: str) -> dict[str, Any]:
@@ -126,6 +190,10 @@ def _fetch_repository_context(repository: str, token: str) -> dict[str, Any]:
 
 def _repository_slug(repository: str) -> str:
     value = repository.strip().removesuffix(".git").rstrip("/")
+    if value.startswith("git@github.com:"):
+        value = value.removeprefix("git@github.com:")
+    elif value.startswith("ssh://git@github.com/"):
+        value = value.removeprefix("ssh://git@github.com/")
     if "github.com/" in value:
         value = value.split("github.com/", 1)[1]
     return value.strip("/")

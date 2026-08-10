@@ -1,0 +1,6 @@
+# One path or glob per line. Blank lines and lines beginning with # are ignored.
+# Paths are relative to the checked-out workspace and use / separators.
+#
+# Example entries:
+# test-fixtures/secrets/
+# *.pem

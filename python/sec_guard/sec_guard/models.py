@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(str, Enum):
@@ -54,6 +54,37 @@ class ReportSummary(BaseModel):
     highest_severity: Severity | None = None
 
 
+class ScanError(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    path: str
+    error: str
+
+
+class ScanSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    scanned_files: int = 0
+    skipped_non_text_files: int = 0
+    ignored_files: int = 0
+    ignored_directories: int = 0
+    oversized_files: list[str] = Field(default_factory=list)
+    non_utf8_files: list[str] = Field(default_factory=list)
+    read_errors: list[ScanError] = Field(default_factory=list)
+    syntax_error_files: list[str] = Field(default_factory=list)
+
+    @property
+    def incomplete_reasons(self) -> list[str]:
+        reasons: list[str] = []
+        if self.oversized_files:
+            reasons.append(f"{len(self.oversized_files)} file(s) exceeded the size limit")
+        if self.non_utf8_files:
+            reasons.append(f"{len(self.non_utf8_files)} file(s) were not valid UTF-8")
+        if self.read_errors:
+            reasons.append(f"{len(self.read_errors)} file or directory read error(s)")
+        return reasons
+
+
 class Report(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -64,6 +95,8 @@ class Report(BaseModel):
     severity_threshold: Severity
     findings: list[Finding]
     summary: ReportSummary
+    scan_complete: bool = True
+    scan_summary: ScanSummary = Field(default_factory=ScanSummary)
 
     def model_payload(self) -> dict[str, Any]:
         """Return a JSON-compatible payload for prompts and diagnostics."""
