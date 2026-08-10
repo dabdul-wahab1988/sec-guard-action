@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest==8.4.2", "PyYAML==6.0.3"]
+test = ["pytest==9.1.1", "PyYAML==6.0.3"]
 
 [project.scripts]
 sec-guard-agent = "sec_guard.agent:main"

@@ -1,5 +1,5 @@
 # Deliberately pinned test/build tools for CI and local verification.
 editables==0.6
 hatchling==1.31.0
-pytest==8.4.2
+pytest==9.1.1
 PyYAML==6.0.3
