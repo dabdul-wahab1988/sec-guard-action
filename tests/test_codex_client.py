@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace
 
-from sec_guard.codex_client import CodexClient
+from sec_guard.codex_client import CodexClient, redact_sensitive_text
 from sec_guard.models import Finding, Report, ReportSummary, Severity
 
 
@@ -108,3 +108,15 @@ def test_sensitive_only_report_does_not_send_source_context(tmp_path):
 
     assert payload["source_context"] == []
     assert "super-secret-value-123" not in prompt
+
+
+def test_redaction_covers_temporary_aws_and_fine_grained_github_tokens():
+    aws_access_key = "ASIA" + "1234567890123456"
+    github_token = "github_pat_" + "11ABCDEFGHijklmnopQRSTUV"
+    value = f"{aws_access_key} {github_token}"
+
+    redacted = redact_sensitive_text(value)
+
+    assert aws_access_key not in redacted
+    assert github_token not in redacted
+    assert redacted.count("<redacted: secret-like value>") == 2

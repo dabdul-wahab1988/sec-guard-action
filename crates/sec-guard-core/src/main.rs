@@ -24,11 +24,14 @@ const SKIP_DIRS: &[&str] = &[
     "vendor",
 ];
 const TEXT_EXTENSIONS: &[&str] = &[
+    "asc",
     "bash",
     "c",
+    "cer",
     "cfg",
     "conf",
     "cpp",
+    "crt",
     "css",
     "dockerfile",
     "env",
@@ -42,8 +45,10 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "js",
     "json",
     "jsx",
+    "key",
     "lock",
     "md",
+    "pem",
     "php",
     "properties",
     "ps1",
@@ -326,7 +331,7 @@ fn build_rules() -> Result<Vec<Rule>, regex::Error> {
             title: "Possible AWS access key",
             description: "The file contains a value shaped like an AWS access key identifier.",
             remediation: "Revoke and rotate the credential, then load it from a managed secret store.",
-            pattern: Regex::new(r"\bAKIA[0-9A-Z]{16}\b")?,
+            pattern: Regex::new(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")?,
             redact_evidence: true,
         },
         Rule {
@@ -344,7 +349,9 @@ fn build_rules() -> Result<Vec<Rule>, regex::Error> {
             title: "Possible GitHub token",
             description: "The file contains a value shaped like a GitHub personal access token.",
             remediation: "Revoke the token and use the workflow token or an encrypted repository secret.",
-            pattern: Regex::new(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b")?,
+            pattern: Regex::new(
+                r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
+            )?,
             redact_evidence: true,
         },
         Rule {
@@ -668,7 +675,18 @@ mod tests {
     fn candidate_file_detection_accepts_source_and_extensionless_files() {
         assert!(is_candidate_file(Path::new("src/main.rs")));
         assert!(is_candidate_file(Path::new("Dockerfile")));
+        assert!(is_candidate_file(Path::new("certificates/server.pem")));
+        assert!(is_candidate_file(Path::new("certificates/server.key")));
         assert!(!is_candidate_file(Path::new("image.png")));
+    }
+
+    #[test]
+    fn credential_detectors_cover_temporary_aws_and_fine_grained_github_tokens() {
+        let rules = build_rules().expect("rules compile");
+        let aws_access_key = format!("{}{}", "ASIA", "1234567890123456");
+        let github_token = format!("{}{}", "github_pat_", "11ABCDEFGHijklmnopQRSTUV");
+        assert!(rules[1].pattern.is_match(&aws_access_key));
+        assert!(rules[3].pattern.is_match(&github_token));
     }
 
     #[test]

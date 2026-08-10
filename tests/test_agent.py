@@ -1,6 +1,6 @@
 import json
 
-from sec_guard.agent import main
+from sec_guard.agent import _emit_annotation, _safe_log_text, main
 from sec_guard.models import Finding, Report, ReportSummary, ScanSummary, Severity
 
 
@@ -51,6 +51,27 @@ def test_agent_fails_when_finding_meets_threshold(tmp_path):
     write_report(report_path, [finding])
 
     assert main(["--report", str(report_path), "--severity-threshold", "high"]) == 1
+
+
+def test_annotations_escape_untrusted_workflow_command_fields(capsys):
+    finding = Finding(
+        id="SEC001",
+        severity=Severity.HIGH,
+        title="Potential hard-coded secret",
+        description="A credential-shaped value was found.",
+        file="safe,part:py\n::warning file=pwned::injected%value",
+        line=1,
+    )
+
+    _emit_annotation(finding)
+    output = capsys.readouterr().out
+
+    assert "::error file=safe%2Cpart%3Apy%0A%3A%3Awarning file=pwned%3A%3Ainjected%25value,line=1::" in output
+    assert "\n::warning" not in output
+
+
+def test_untrusted_model_log_text_stays_on_one_line():
+    assert _safe_log_text("suggestion\n::warning::injected") == r"suggestion\n::warning::injected"
 
 
 def test_agent_writes_machine_readable_github_outputs(tmp_path):
