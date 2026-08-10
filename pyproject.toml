@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.25,<2.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sec-guard"
+version = "0.1.0"
+description = "Optional Python remediation agent for sec-guard-action"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Dickson Abdul-Wahab" }]
+dependencies = [
+    "openai>=1.40,<2.0",
+    "pydantic>=2.7,<3.0",
+    "requests>=2.31,<3.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0,<9.0"]
+
+[project.scripts]
+sec-guard-agent = "sec_guard.agent:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/sec_guard/sec_guard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
