@@ -98,11 +98,29 @@ def _load_report(path: Path) -> Report:
 
 
 def _emit_annotation(finding: Finding) -> None:
-    location = f"file={finding.file}"
+    location = f"file={_escape_workflow_property(finding.file)}"
     if finding.line is not None:
         location += f",line={finding.line}"
-    message = f"{finding.id} {finding.title}: {finding.description}"
+    message = _escape_workflow_data(f"{finding.id} {finding.title}: {finding.description}")
     print(f"::error {location}::{message}")
+
+
+def _escape_workflow_data(value: str) -> str:
+    """Escape data embedded in a GitHub Actions workflow command."""
+
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_workflow_property(value: str) -> str:
+    """Escape a value embedded in a GitHub Actions command property."""
+
+    return _escape_workflow_data(value).replace(":", "%3A").replace(",", "%2C")
+
+
+def _safe_log_text(value: object) -> str:
+    """Keep untrusted multi-line values on one workflow-log line."""
+
+    return str(value).replace("\r", r"\r").replace("\n", r"\n")
 
 
 def _maybe_generate_patch(report: Report, blocking: list[Finding], args: argparse.Namespace) -> None:
@@ -124,13 +142,14 @@ def _maybe_generate_patch(report: Report, blocking: list[Finding], args: argpars
         args.patch_output.parent.mkdir(parents=True, exist_ok=True)
         safe_patch = redact_sensitive_text(result.patch.rstrip())
         args.patch_output.write_text(safe_patch + "\n", encoding="utf-8")
-        print(f"sec-guard-agent: patch draft written to {args.patch_output}")
+        print(f"sec-guard-agent: patch draft written to {_safe_log_text(args.patch_output)}")
         if result.summary:
-            print(f"sec-guard-agent: {redact_sensitive_text(result.summary)}")
+            summary = _safe_log_text(redact_sensitive_text(result.summary))
+            print(f"sec-guard-agent: {summary}")
         if result.tests:
             print("sec-guard-agent: suggested verification commands:")
             for command in result.tests:
-                print(f"  - {command}")
+                print(f"  - {_safe_log_text(command)}")
     except Exception as exc:  # pragma: no cover - provider failures depend on the network
         print(
             "sec-guard-agent: patch generation skipped after provider error: "

@@ -65,7 +65,7 @@ jobs:
           severity_threshold: high
 ```
 
-`openai_api_key` is optional. Without it, the deterministic scan, report, SARIF output, annotations, artifact upload, and severity gate still run while patch drafting is skipped. The `v1` reference is the supported major release line; use a reviewed commit SHA when your organization requires immutable action references.
+`openai_api_key` is optional. Without it, the deterministic scan, report, SARIF output, annotations, artifact upload, and severity gate still run while patch drafting is skipped. The `v1` reference is the supported major release line once it has been published from a reviewed `main` commit; use a reviewed commit SHA when your organization requires immutable action references.
 
 ## Inputs
 
@@ -101,9 +101,9 @@ Files larger than 1 MiB, invalid UTF-8 files, and read errors are recorded in `s
 The initial rules are intentionally small and reviewable:
 
 - `SEC001`: credential-shaped assignments such as API keys, tokens, secrets, or passwords.
-- `SEC002`: possible AWS access key identifiers.
+- `SEC002`: possible AWS access key identifiers, including long-lived `AKIA` and temporary `ASIA` forms.
 - `SEC003`: PEM private-key headers.
-- `SEC004`: possible GitHub personal access tokens.
+- `SEC004`: possible GitHub access tokens, including classic/App prefixes and fine-grained `github_pat_` tokens.
 - `SEC005`: direct dynamic `eval(` calls.
 
 Evidence is redacted in the Rust report for every rule so a co-located secret cannot be copied into an artifact accidentally. When patch drafting is enabled, source context for `SEC001`–`SEC004` is omitted, and bounded context for other findings is sanitized before it is sent to OpenAI. Treat the generated patch and uploaded artifact as sensitive workflow outputs and review your organization’s data-handling policy before enabling the API integration.
@@ -154,6 +154,11 @@ pytest -q
 ```
 
 All repository links, package metadata, and action references point to [`github.com/dabdul-wahab1988/sec-guard-action`](https://github.com/dabdul-wahab1988/sec-guard-action).
+
+## Maintainer documentation
+
+- [Release checklist](https://github.com/dabdul-wahab1988/sec-guard-action/blob/main/RELEASING.md)
+- [Security policy](https://github.com/dabdul-wahab1988/sec-guard-action/blob/main/SECURITY.md)
 
 ## License
 
