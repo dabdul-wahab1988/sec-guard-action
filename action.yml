@@ -1,0 +1,66 @@
+name: sec-guard-action
+description: Run the Rust sec-guard scanner and optionally draft remediation patches with OpenAI.
+author: Dickson Abdul-Wahab
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  openai_api_key:
+    description: Optional OpenAI API key for remediation patch drafting.
+    required: false
+    default: ""
+  github_token:
+    description: Optional GitHub token for repository metadata lookup.
+    required: false
+    default: ""
+  severity_threshold:
+    description: "Minimum severity that fails the job: info, low, medium, high, or critical."
+    required: false
+    default: high
+
+runs:
+  using: composite
+  steps:
+    - name: Verify runner toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v cargo >/dev/null
+        command -v python >/dev/null
+        cargo --version
+        python --version
+
+    - name: Install sec-guard Python agent
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --disable-pip-version-check --no-warn-script-location --upgrade "${{ github.action_path }}"
+
+    - name: Run Rust security scan
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/sec-guard"
+        cargo run --locked --manifest-path "${{ github.action_path }}/Cargo.toml" --package sec-guard-core --release -- \
+          --workspace "${{ github.workspace }}" \
+          --output "$RUNNER_TEMP/sec-guard/report.json" \
+          --severity-threshold "${{ inputs.severity_threshold }}"
+
+    - name: Evaluate findings and draft optional patch
+      shell: bash
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+        python -m sec_guard.agent \
+          --report "$RUNNER_TEMP/sec-guard/report.json" \
+          --workspace "$GITHUB_WORKSPACE" \
+          --repository "$GITHUB_REPOSITORY" \
+          --severity-threshold "${{ inputs.severity_threshold }}" \
+          --generate-patch \
+          --patch-output "$RUNNER_TEMP/sec-guard/sec-guard.patch"
+        echo "sec-guard-action: report directory is $RUNNER_TEMP/sec-guard"
