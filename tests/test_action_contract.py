@@ -36,6 +36,13 @@ def test_runtime_lock_contains_direct_dependencies():
         assert package in lock
 
 
+def test_runtime_lock_keeps_pydantic_core_compatible_with_pydantic():
+    lock = (ROOT / "requirements-runtime.txt").read_text(encoding="utf-8")
+
+    assert "pydantic==2.13.4" in lock
+    assert "pydantic-core==2.46.4" in lock
+
+
 def test_ci_exercises_the_composite_action():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
 
