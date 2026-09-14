@@ -1,7 +1,7 @@
 # Exact runtime lock used by the composite action. Keep this file in sync with
 # the direct dependencies in pyproject.toml and refresh it deliberately.
 annotated-types==0.8.0
-anyio==4.14.2
+anyio==4.15.1
 certifi==2026.7.22
 charset-normalizer==3.5.0
 distro==1.9.0
